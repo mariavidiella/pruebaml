@@ -87,7 +87,7 @@ class ClusteringFilter:
         # Guardamos las etiquetas asignadas por DBSCAN (-1 significa outlier)
         self.labels = self.dbscan.labels_
 
-        # Creamos una máscara para quedarnos solo con los puntos que NO son outliers
+        # Nos quedamos solo con los puntos que NO son outliers
         self.sin_outliers = self.labels != -1
 
     def transform(self, X_data, y_data):
@@ -101,7 +101,7 @@ class ClusteringFilter:
         # Predecir etiquetas DBSCAN sobre los datos test
         labels = self.dbscan.fit_predict(x_norm)
 
-        # Crear la máscara para filtrar outliers
+        # Filtramos outliers
         sin_outliers = labels != -1
 
         return X[sin_outliers], y[sin_outliers]
