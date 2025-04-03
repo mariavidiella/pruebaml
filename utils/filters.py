@@ -4,7 +4,8 @@ from sklearn.feature_selection import VarianceThreshold
 from feature_engine.selection import DropCorrelatedFeatures, DropDuplicateFeatures
 from feature_engine.selection import ProbeFeatureSelection
 from sklearn.linear_model import LinearRegression
-
+from sklearn.cluster import DBSCAN
+from sklearn.preprocessing import StandardScaler
 
 class SimpleFilter:
 
@@ -55,3 +56,43 @@ class SimpleFilter:
         print(not_corr.shape)
         X_transformed = self.advanced_filtered.transform(not_corr)
         return X_transformed, y_data
+    
+
+
+class ClusteringFilter:
+
+    def __init__(self, eps=0.5, min_samples=5):
+        # Inicializamos el algoritmo DBSCAN con los parámetros dados
+        self.dbscan = DBSCAN(eps=eps, min_samples=min_samples)
+        # Creamos un escalador para estandarizar las variables numéricas
+        self.scaler = StandardScaler()
+
+    def fit(self, X_data, y_data):
+
+        # Copiamos los datos para no modificarlos directamente
+        X = X_data.copy()
+        y = y_data.copy()
+
+        # Seleccionar variables numéricas relevantes
+        self.columns_to_use = ["Area", "No. of Bedrooms"]
+        X_num = X[self.columns_to_use]
+
+        # Escalamos 
+        X_scaled = self.scaler.fit_transform(X_num)
+
+        # Aplicamos clustering
+        self.dbscan.fit(X_scaled)
+
+        # Guardamos las etiquetas asignadas por DBSCAN (-1 significa outlier)
+        self.labels = self.dbscan.labels_
+
+        # Creamos una máscara para quedarnos solo con los puntos que NO son outliers
+        self.sin_outliers = self.labels != -1
+
+    def transform(self, X_data, y_data):
+        # Copiamos los datos para no modificarlos directamente
+        X = X_data.copy()
+        y = y_data.copy()
+
+        # Devolvemos solo los datos que no son outliers
+        return X[self.sin_outliers], y[self.sin_outliers]

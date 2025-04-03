@@ -7,11 +7,13 @@ Todas las clases tendrán al menos dos métodos:
 
 import pandas as pd
 import numpy as np
-from sklearn.impute import SimpleImputer
+from sklearn.impute import KNNImputer, SimpleImputer
 from sklearn.preprocessing import OneHotEncoder
 from skrub import GapEncoder
 from sklearn.preprocessing import QuantileTransformer, StandardScaler
 from sklearn.preprocessing import PolynomialFeatures
+from sklearn.preprocessing import PowerTransformer, RobustScaler
+from skrub import SimilarityEncoder
 
 
 class ExtendedTransformation:
@@ -154,3 +156,139 @@ class SimpleTransformation:
         )
         X_final = pd.concat([X.drop(columns=["city"]), X_cat], axis=1)
         return X_final, y
+    
+
+
+class MyTransformation:
+
+    def __init__(self, n_neighbors=5):
+
+        # Imputador para "No. of Bedrooms" usando KNN
+        self.imputer_beds = KNNImputer(n_neighbors=n_neighbors)
+        # Imputador para "Area" usando la mediana
+        self.imputer_area = SimpleImputer(strategy="median")
+
+        # Transformadores para normalizar la distribución de las variables numéricas
+        self.beds_transformer = PowerTransformer(method="yeo-johnson")
+        self.area_transformer = PowerTransformer(method="yeo-johnson")
+
+        # Escaladores que reducen el efecto de los valores extremos
+        self.beds_scaler = RobustScaler()
+        self.area_scaler = RobustScaler()
+
+        # Transformador y escalador para la variable objetivo "Price"
+        self.y_transformer = PowerTransformer(method="yeo-johnson")
+        self.scaler_y = RobustScaler()
+
+        # Codificador para variables categóricas con muchas clases
+        self.encoder = SimilarityEncoder()
+
+        # Indicamos si queremos incluir la frecuencia de cada categoría como nueva feature
+        self.include_freq = True
+
+    def fit(self, X_data, y_data):
+
+        # Copiamos los datos para no modificarlos directamente
+        X = X_data.copy()
+        y = y_data.copy()
+
+        # Guardamos los nombres de las columnas clave
+        self.bedrooms_column = "No. of Bedrooms"
+        self.area_column = "Area"
+        self.cat_columns = ["city", "Location"]
+        self.bin_vars_columns = X.columns[4:]
+
+        # Reemplazar 9 por NaN ya que indican los valores faltantes
+        X = X.replace({9: np.nan})
+
+        # Reemplazar binarios 0/1/NaN por texto
+        X[self.bin_vars_columns] = X[self.bin_vars_columns].replace(
+            {0: "NO", 1: "SI", np.nan: "NO_DISPONIBLE"}
+        )
+
+        # Ajustamos los imputadores
+        self.imputer_area.fit(X[[self.area_column]])
+        self.imputer_beds.fit(X[[self.bedrooms_column]])
+
+        # Ajustamos los transformadores para hacer las variables más normales
+        self.area_transformer.fit(X[[self.area_column]])
+        self.beds_transformer.fit(X[[self.bedrooms_column]])
+
+        # Ajustamos los escaladores para trabajar sobre variables normalizadas
+        self.area_scaler.fit(self.area_transformer.transform(X[[self.area_column]]))
+        self.beds_scaler.fit(self.beds_transformer.transform(X[[self.bedrooms_column]]))
+
+        # Codificadores categóricos
+        self.encoders = {}
+        for col in self.cat_columns:
+            X[col] = X[col].fillna("NO DISPONIBLE")
+            enc = SimilarityEncoder()
+            enc.fit(X[[col]])
+            self.encoders[col] = enc
+
+        # Ajustamos la transformación y escalado de la variable objetivo
+        self.y_transformer.fit(y)
+        self.scaler_y.fit(self.y_transformer.transform(y))
+
+    def transform(self, X_data, y_data):
+
+        # Copiamos los datos para no modificarlos directamente
+        X = X_data.copy()
+        y = y_data.copy()
+        
+        # Reemplazamos 9 por NaN en caso de que queden. Igual que en fit, convertimos variables binarias a texto
+        X = X.replace({9: np.nan})
+        X[self.bin_vars_columns] = X[self.bin_vars_columns].replace(
+            {0: "NO", 1: "SI", np.nan: "NO_DISPONIBLE"}
+        )
+
+        # Imputamos valores faltantes
+        X[self.area_column] = self.imputer_area.transform(X[[self.area_column]])
+        X[self.bedrooms_column] = self.imputer_beds.transform(X[[self.bedrooms_column]])
+
+        # Transformación y escalado
+        area_pt = self.area_transformer.transform(X[[self.area_column]])
+        beds_pt = self.beds_transformer.transform(X[[self.bedrooms_column]])
+
+        area_scaled = self.area_scaler.transform(area_pt)
+        beds_scaled = self.beds_scaler.transform(beds_pt)
+
+        # Creamos DataFrame con variables numéricas finales
+        X_num = pd.DataFrame({
+            self.area_column: area_scaled.flatten(),
+            self.bedrooms_column: beds_scaled.flatten()
+        }, index=X.index)
+
+        # Codificación categórica
+        encoded_features = []
+        for col in self.cat_columns:
+            X[col] = X[col].fillna("MISSING")
+            encoded = self.encoders[col].transform(X[[col]])
+            encoded_df = pd.DataFrame(encoded, index=X.index)
+            encoded_df.columns = [f"{col}_sim_{i}" for i in range(encoded.shape[1])]
+            encoded_features.append(encoded_df)
+
+            # Añadimos la frecuencia como nueva columna si está activado
+            if self.include_freq:
+                freq_map = X[col].value_counts().to_dict()
+                X[f"{col}_freq"] = X[col].map(freq_map)
+
+        # Eliminamos las columnas categóricas originales
+        X = X.drop(columns=self.cat_columns)
+
+         # Unimos todo: numéricas escaladas + codificadas + frecuencias
+        X_final = pd.concat(
+            [X_num] + encoded_features + [X[[f"{col}_freq" for col in self.cat_columns]]],
+            axis=1
+        )
+
+        # Escalamos la variable objetivo
+        y_scaled = self.scaler_y.transform(self.y_transformer.transform(y))
+
+        return X_final, y_scaled
+
+    def inverse_transform(self, y_data):
+        # Deshacemos el escalado y la transformación de la variable objetivo
+        return self.y_transformer.inverse_transform(
+            self.scaler_y.inverse_transform(y_data)
+        )
