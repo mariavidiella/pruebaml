@@ -67,6 +67,7 @@ class ClusteringFilter:
         # Creamos un escalador para estandarizar las variables numéricas
         self.scaler = StandardScaler()
 
+
     def fit(self, X_data, y_data):
 
         # Copiamos los datos para no modificarlos directamente
@@ -90,9 +91,17 @@ class ClusteringFilter:
         self.sin_outliers = self.labels != -1
 
     def transform(self, X_data, y_data):
-        # Copiamos los datos para no modificarlos directamente
+
         X = X_data.copy()
         y = y_data.copy()
 
-        # Devolvemos solo los datos que no son outliers
-        return X[self.sin_outliers], y[self.sin_outliers]
+        # Escalar el test con el mismo scaler
+        x_norm = self.scaler.transform(X[self.columns_to_use])
+
+        # Predecir etiquetas DBSCAN sobre los datos test
+        labels = self.dbscan.fit_predict(x_norm)
+
+        # Crear la máscara para filtrar outliers
+        sin_outliers = labels != -1
+
+        return X[sin_outliers], y[sin_outliers]
